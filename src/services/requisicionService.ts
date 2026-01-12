@@ -1,3 +1,4 @@
+// src/services/requisicionService.ts
 import axios, { AxiosInstance } from 'axios';
 import type {
   Requisicion,
@@ -31,7 +32,12 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
   (response) => {
-    console.log('[API Response]', response.status, response.config.url, response.data);
+    // Si la respuesta es un Blob (archivo), no intentamos loguear la data para no llenar la consola
+    if (response.config.responseType === 'blob') {
+       console.log('[API Response]', response.status, response.config.url, 'Blob (Archivo)');
+    } else {
+       console.log('[API Response]', response.status, response.config.url, response.data);
+    }
     return response;
   },
   (error) => {
@@ -311,6 +317,45 @@ export const requisicionService = {
     } catch (error: any) {
       console.error(`[Service] Error en buscarCucopPorCapitulo (${capitulo}):`, error.response ? error.response.data : error.message);
       throw new Error(error.response?.data?.message || error.message || `Error al buscar CUCOPs del capítulo ${capitulo}`);
+    }
+  },
+
+  // <<< --- AQUÍ ESTÁ LA NUEVA FUNCIÓN PARA GENERAR DOCUMENTOS --- >>>
+  
+  async generarDocumentoBackend(plantilla: string, datos: any, nombreArchivo: string): Promise<void> {
+    try {
+      console.log(`[Service] Solicitando documento ${plantilla} al backend...`);
+      
+      const response = await apiClient.post('/documentos/generar', {
+        plantilla: plantilla, // Debe coincidir con el nombre de archivo en backend/plantillas (ej: "focon01")
+        datos: datos          // Objeto JSON con los valores para {{variables}}
+      }, {
+        responseType: 'blob' // CRÍTICO: Indica que esperamos un archivo binario (PDF)
+      });
+
+      // Crear URL temporal para descargar
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      // Forzamos la extensión .pdf en la descarga del navegador
+      link.setAttribute('download', `${nombreArchivo}.pdf`); 
+      document.body.appendChild(link);
+      link.click();
+      
+      // Limpieza de memoria
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      console.log(`[Service] Documento ${nombreArchivo} descargado correctamente.`);
+
+    } catch (error: any) {
+      console.error(`[Service] Error generando documento backend:`, error);
+      
+      // Intentar leer el mensaje de error si viene dentro del blob
+      if (error.response?.data instanceof Blob) {
+         const text = await error.response.data.text();
+         throw new Error(`Error del servidor: ${text}`);
+      }
+      throw new Error('No se pudo generar el documento en el servidor.');
     }
   },
 };

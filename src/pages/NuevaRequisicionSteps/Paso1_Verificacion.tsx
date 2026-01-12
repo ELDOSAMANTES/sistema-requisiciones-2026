@@ -50,7 +50,9 @@ export default function Paso1_Verificacion({
   // --- ESTADOS DE SELECCIÓN ---
   const [selectedCapitulo, setSelectedCapitulo] = useState('');
   const [selectedGenerica, setSelectedGenerica] = useState('');
-  const [selectedEspecifica, setSelectedEspecifica] = useState('');
+  
+  // ESTE ES EL DATO CLAVE QUE QUEREMOS GUARDAR:
+  const [selectedEspecifica, setSelectedEspecifica] = useState(''); 
 
   // --- ESTADOS DE UI ---
   const [isLoadingCapitulos, setIsLoadingCapitulos] = useState(false);
@@ -113,7 +115,7 @@ export default function Paso1_Verificacion({
 
   // 4. CAMBIO ESPECÍFICA
   const handleEspecificaChange = async (especificaId: string) => {
-    setSelectedEspecifica(especificaId);
+    setSelectedEspecifica(especificaId); // <--- Aquí guardamos el ID (ej: "21101")
     setProductos([]); setProductoSeleccionado(null);
 
     if (!especificaId) return;
@@ -142,6 +144,7 @@ export default function Paso1_Verificacion({
     setCantidad(1);
   };
 
+  // --- AQUÍ OCURRE EL CAMBIO IMPORTANTE ---
   const handleAgregarBien = () => {
     if (!productoSeleccionado) {
       toast({ title: 'Atención', description: 'Seleccione un bien de la lista.', variant: 'destructive' });
@@ -159,6 +162,8 @@ export default function Paso1_Verificacion({
       cantidad: cantidad,
       precio_unitario: 0,
       precio_estimado: productoSeleccionado.precio_estimado,
+      // AGREGAMOS LA PARTIDA ESPECÍFICA QUE ESTÁ SELECCIONADA EN EL DROPDOWN
+      partida_especifica: selectedEspecifica 
     };
     
     setPartidas([...partidas, nuevaPartida]);
@@ -330,6 +335,11 @@ export default function Paso1_Verificacion({
                       <Label className="text-[10px] text-gray-500 uppercase font-bold">Clave CUCOP</Label>
                       <p className="text-sm font-mono font-medium">{productoSeleccionado.clave_cucop_plus}</p>
                     </div>
+                    {/* MOSTRAMOS LA PARTIDA SELECCIONADA AQUÍ TAMBIÉN PARA CONFIRMAR */}
+                    <div>
+                        <Label className="text-[10px] text-gray-500 uppercase font-bold">Partida Específica</Label>
+                        <p className="text-sm font-mono font-bold text-gray-700">{selectedEspecifica}</p>
+                    </div>
                     <div>
                       <Label className="text-[10px] text-gray-500 uppercase font-bold">Descripción</Label>
                       <p className="text-xs font-medium text-gray-800 leading-relaxed">
@@ -385,6 +395,8 @@ export default function Paso1_Verificacion({
               <Table>
                 <TableHeader className="bg-[#EAEAEA]">
                   <TableRow>
+                    {/* AGREGUÉ COLUMNA VISUAL PARA QUE VEAS QUE SÍ SE GUARDA */}
+                    <TableHead className="text-xs font-bold text-gray-700">Partida</TableHead> 
                     <TableHead className="text-xs font-bold text-gray-700">Clave</TableHead>
                     <TableHead className="text-xs font-bold text-gray-700">Descripción</TableHead>
                     <TableHead className="text-xs font-bold text-gray-700">Unidad</TableHead>
@@ -397,13 +409,15 @@ export default function Paso1_Verificacion({
                 <TableBody>
                   {partidas.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-16 text-center text-xs text-gray-500">
+                      <TableCell colSpan={8} className="h-16 text-center text-xs text-gray-500">
                         No hay partidas agregadas.
                       </TableCell>
                     </TableRow>
                   ) : (
                     partidas.map((p, i) => (
                       <TableRow key={i} className="hover:bg-gray-50">
+                        {/* AQUI MOSTRAMOS LA PARTIDA ESPECIFICA GUARDADA */}
+                        <TableCell className="text-xs font-bold">{p.partida_especifica || '-'}</TableCell> 
                         <TableCell className="font-mono text-xs">{p.cucop}</TableCell>
                         <TableCell className="text-xs">{p.descripcion}</TableCell>
                         <TableCell className="text-xs">{p.unidad}</TableCell>

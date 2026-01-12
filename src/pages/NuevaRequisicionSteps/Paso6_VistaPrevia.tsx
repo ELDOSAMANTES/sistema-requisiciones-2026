@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Check, ExternalLink, FileText, Download } from "lucide-react";
+import { Check, ExternalLink, FileText, Download, Loader2, Printer } from "lucide-react";
 import { DocumentoGenerado } from '@/lib/foconGenerators';
 import { 
   Partida, 
@@ -53,6 +53,136 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   
+  // Estado para indicar qué documento se está generando en el servidor
+  const [generandoDocServer, setGenerandoDocServer] = useState<string | null>(null);
+
+  // --- LÓGICA DE DESCARGA DESDE EL BACKEND (PYTHON) ---
+  const handleDescargaBackend = async (tipoPlantilla: string) => {
+    setGenerandoDocServer(tipoPlantilla);
+    try {
+      let datosParaPython = {};
+      let nombreArchivoSalida = "";
+
+      // ============================================================
+      // 1. FOCON-01 (SOLICITUD DE REQUISICIÓN / PEDIDO)
+      // ============================================================
+      if (tipoPlantilla === 'focon01') {
+        nombreArchivoSalida = `FOCON01_Pedido_${datos.folio}`;
+        
+        datosParaPython = {
+          folio: datos.folio,
+          fecha: datos.datosGenerales.fechaElaboracion,
+          area: datos.datosGenerales.areaSolicitante,
+          solicitante: datos.datosGenerales.solicitante,
+          tipo_contratacion: datos.datosGenerales.tipoContratacion,
+          programa: datos.datosGenerales.programaProyecto || "N/A",
+          oficio_autorizacion: datos.datosGenerales.oficioAutorizacion || "S/N",
+
+          // Mapeo de partidas corregido
+          partidas: datos.partidas.map((p) => {
+             const precioFinal = Number(p.precio_estimado || p.precio_unitario || 0);
+             return {
+                // IMPORTANTE: Asegúrate de que en Word sea {{ p.partida_especifica }}
+                partida_especifica: p.partida_especifica || "S/D", 
+                
+                cucop: p.cucop,
+                descripcion: p.descripcion,
+                unidad: p.unidad,
+                cantidad: p.cantidad,
+                // Formateamos moneda
+                precio: `$${precioFinal.toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+                importe: `$${(p.cantidad * precioFinal).toLocaleString('es-MX', {minimumFractionDigits: 2})}`
+             };
+          }),
+          
+          subtotal: `$${calcularSubtotal().toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+          iva: `$${calcularIVA().toLocaleString('es-MX', {minimumFractionDigits: 2})}`,
+          total: `$${calcularTotal().toLocaleString('es-MX', {minimumFractionDigits: 2})}`
+        };
+      } 
+      
+      // ============================================================
+      // 2. FOCON-03 (ANEXO TÉCNICO)
+      // ============================================================
+      else if (tipoPlantilla === 'focon03') {
+         nombreArchivoSalida = `FOCON03_AnexoTecnico_${datos.folio}`;
+         datosParaPython = {
+            folio: datos.folio,
+            area: datos.datosGenerales.areaSolicitante,
+            partidas: datos.partidas.map((p, index) => ({
+                idx: index + 1,
+                descripcion: p.descripcion,
+                cantidad: p.cantidad,
+                unidad: p.unidad
+            }))
+         };
+      }
+
+      // ============================================================
+      // 3. FOCON-05 (INVESTIGACIÓN DE MERCADO)
+      // ============================================================
+      else if (tipoPlantilla === 'focon05') {
+         nombreArchivoSalida = `FOCON05_Investigacion_${datos.folio}`;
+         datosParaPython = {
+            folio: datos.folio,
+            fecha: datos.datosGenerales.fechaElaboracion,
+            proveedor_ganador: datos.proveedorGanador || "SIN SELECCIÓN",
+            justificacion_seleccion: datos.razonSeleccion || "N/A",
+            
+            fuentes_compranet: datos.fuentesCompranet.map((f, i) => ({
+                idx: i + 1,
+                proveedor: f.nombre_proveedor,
+                precio: `$${(f.precio_unitario || 0).toLocaleString('es-MX')}`,
+                contrato: f.numero_contrato
+            })),
+            
+            fuentes_internet: datos.fuentesInternet.map((f, i) => ({
+                idx: i + 1,
+                busqueda: f.termino_busqueda,
+                pagina: f.url_pagina,
+                proveedores: f.proveedores_encontrados.join(", ")
+            })),
+            
+            fuentes_archivos: datos.fuentesArchivosInternos.map((f, i) => ({
+                idx: i + 1,
+                proveedor: f.proveedor,
+                contrato: f.numero_contrato_anterior
+            })),
+            
+            fuentes_camaras: datos.fuentesCamaras.map((f, i) => ({
+                idx: i + 1,
+                institucion: f.institucion,
+                oficio: f.folio_oficio
+            }))
+         };
+      }
+
+      // ============================================================
+      // 4. FOCON-06 (JUSTIFICACIÓN)
+      // ============================================================
+      else if (tipoPlantilla === 'focon06') { 
+         nombreArchivoSalida = `FOCON06_Justificacion_${datos.folio}`;
+         datosParaPython = {
+            folio: datos.folio,
+            area: datos.datosGenerales.areaSolicitante,
+            fecha: datos.datosGenerales.fechaElaboracion,
+            justificacion_texto: datos.justificacion 
+         };
+      }
+
+      // Llamada al servicio
+      await requisicionService.generarDocumentoBackend(tipoPlantilla, datosParaPython, nombreArchivoSalida);
+      toast({ title: "Documento Generado", description: `Se descargó ${nombreArchivoSalida}` });
+
+    } catch (error) {
+      console.error(error);
+      toast({ variant: "destructive", title: "Error", description: "No se pudo generar el documento." });
+    } finally {
+      setGenerandoDocServer(null);
+    }
+  };
+
+  // --- LÓGICA DE DESCARGA LOCAL (SI LA USAS) ---
   const descargarDocumento = (doc: DocumentoGenerado) => {
     if (doc.blob) {
       const url = URL.createObjectURL(doc.blob);
@@ -66,6 +196,7 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
     }
   };
 
+  // --- LÓGICA DE ENVÍO AL API (CREAR REQUISICIÓN) ---
   const handleEnviarAutorizacion = async () => {
     if (!datos.datosGenerales || datos.partidas.length === 0 || !datos.justificacion) {
       toast({ title: 'Error de Validación', description: 'Faltan datos esenciales.', variant: 'destructive' });
@@ -73,7 +204,6 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
     }
     setIsLoading(true);
 
-    // Mapeo completo de fuentes con todos los detalles
     const fuentesCompranetPayload = datos.fuentesCompranet.map(f => ({
       nombre_fuente: f.nombre_proveedor || 'Proveedor Compranet',
       tipo_fuente: 'COMPRANET',
@@ -136,6 +266,7 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
         cantidad: p.cantidad,
         unidad: p.unidad,
         precio_unitario: p.precio_unitario,
+        partida_especifica: p.partida_especifica // Se guarda también en BD
       })),
       investigacion: {
         fuentes: todasLasFuentes,
@@ -165,6 +296,23 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
     }
   };
 
+  // --- HELPERS PARA ESTILOS ---
+  const getEstatusInfo = (proveedor: ProveedorInvitado) => {
+    if (!proveedor.solicitud_enviada) return { label: 'Pendiente de invitar', color: 'bg-muted text-muted-foreground', icon: null };
+    if (proveedor.solicitud_enviada && !proveedor.respuesta_subida) return { label: 'Esperando respuesta', color: 'bg-amber-100 text-amber-800', icon: null };
+    return { label: 'Cotización recibida', color: 'bg-green-100 text-green-800', icon: <Check className="h-3 w-3 mr-1" /> };
+  };
+
+  const getOrigenLabel = (origen: string) => {
+    const labels: Record<string, string> = { 'compranet': 'Compranet', 'archivo_interno': 'Archivo Interno', 'camara_universidad': 'Cámara/Universidad', 'internet': 'Internet' };
+    return labels[origen] || origen;
+  };
+
+  const getOrigenColor = (origen: string) => {
+    const colors: Record<string, string> = { 'compranet': 'bg-blue-500', 'archivo_interno': 'bg-green-500', 'camara_universidad': 'bg-purple-500', 'internet': 'bg-orange-500' };
+    return colors[origen] || 'bg-gray-500';
+  };
+
   return (
     <Card>
       <CardHeader className="border-b border-border bg-muted/30">
@@ -180,114 +328,99 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
             </p>
           </div>
           
-          {/* DOCUMENTOS GENERADOS - RESUMEN COMPLETO */}
-          {documentosGenerados.length > 0 && (
-            <div className="bg-green-50 border-2 border-green-300 p-6 rounded-lg">
-              <h4 className="font-bold text-green-900 mb-3 flex items-center gap-2 text-lg">
-                <FileText className="h-5 w-5" />
-                Documentación Oficial Generada
-              </h4>
-              <p className="text-sm text-green-800 mb-4">
-                Los siguientes formatos FO-CON han sido generados automáticamente y están listos para descarga:
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {documentosGenerados.map((doc, idx) => (
-                  <Card key={idx} className="bg-white border-green-200">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="font-bold text-green-900">{doc.codigo}</p>
-                          <p className="text-xs text-green-700 mt-1">{doc.nombre}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(doc.fechaGeneracion).toLocaleString('es-MX')}
-                          </p>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => descargarDocumento(doc)}
-                          className="ml-2"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-          
+          {/* === BOTONES DE DESCARGA (BACKEND) === */}
+          <div className="bg-slate-50 border-2 border-slate-200 p-6 rounded-lg mb-6">
+             <h4 className="font-bold text-slate-900 mb-3 flex items-center gap-2 text-lg">
+                <Printer className="h-5 w-5" />
+                Formatos Oficiales (Backend)
+             </h4>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                <Button variant="outline" className="h-auto py-3 flex flex-col items-start gap-1 border-blue-200 hover:bg-blue-50" onClick={() => handleDescargaBackend('focon01')} disabled={generandoDocServer !== null}>
+                   <span className="font-bold text-blue-700 flex items-center gap-2">
+                     {generandoDocServer === 'focon01' ? <Loader2 className="animate-spin h-4 w-4"/> : <FileText className="h-4 w-4"/>} 
+                     FO-CON-01
+                   </span>
+                   <span className="text-xs text-slate-500">Solicitud de Requisición</span>
+                </Button>
+                <Button variant="outline" className="h-auto py-3 flex flex-col items-start gap-1 border-indigo-200 hover:bg-indigo-50" onClick={() => handleDescargaBackend('focon03')} disabled={generandoDocServer !== null}>
+                   <span className="font-bold text-indigo-700 flex items-center gap-2">
+                     {generandoDocServer === 'focon03' ? <Loader2 className="animate-spin h-4 w-4"/> : <FileText className="h-4 w-4"/>} 
+                     FO-CON-03
+                   </span>
+                   <span className="text-xs text-slate-500">Anexo Técnico</span>
+                </Button>
+                <Button variant="outline" className="h-auto py-3 flex flex-col items-start gap-1 border-emerald-200 hover:bg-emerald-50" onClick={() => handleDescargaBackend('focon05')} disabled={generandoDocServer !== null}>
+                   <span className="font-bold text-emerald-700 flex items-center gap-2">
+                     {generandoDocServer === 'focon05' ? <Loader2 className="animate-spin h-4 w-4"/> : <FileText className="h-4 w-4"/>} 
+                     FO-CON-05
+                   </span>
+                   <span className="text-xs text-slate-500">Investigación de Mercado</span>
+                </Button>
+                <Button variant="outline" className="h-auto py-3 flex flex-col items-start gap-1 border-orange-200 hover:bg-orange-50" onClick={() => handleDescargaBackend('focon06')} disabled={generandoDocServer !== null}>
+                   <span className="font-bold text-orange-700 flex items-center gap-2">
+                     {generandoDocServer === 'focon06' ? <Loader2 className="animate-spin h-4 w-4"/> : <FileText className="h-4 w-4"/>} 
+                     FO-CON-06
+                   </span>
+                   <span className="text-xs text-slate-500">Justificación Técnica</span>
+                </Button>
+             </div>
+          </div>
+
           <div className="border rounded-md">
             <div className="bg-muted/50 px-6 py-4 border-b">
-              <h3 className="font-bold text-xl text-primary">Requisición de Compra</h3>
+              <h3 className="font-bold text-xl text-primary">Resumen de Requisición</h3>
               <div className="flex justify-between items-center mt-2">
                 <span className="text-sm text-muted-foreground">Folio: {datos.folio}</span>
-                <span className="px-3 py-1 bg-amber-100 text-amber-800 text-sm rounded-full font-medium">
-                  En Captura
-                </span>
+                <span className="px-3 py-1 bg-amber-100 text-amber-800 text-sm rounded-full font-medium">En Captura</span>
               </div>
             </div>
             <div className="p-6 space-y-6">
+              
+              {/* DATOS GENERALES */}
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <h4 className="font-semibold mb-2 text-foreground">Información General</h4>
                   <dl className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Fecha:</dt>
-                      <dd className="font-medium">{datos.datosGenerales.fechaElaboracion}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Área:</dt>
-                      <dd className="font-medium">{datos.datosGenerales.areaSolicitante}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Solicitante:</dt>
-                      <dd className="font-medium">{datos.datosGenerales.solicitante}</dd>
-                    </div>
+                    <div className="flex justify-between"><dt className="text-muted-foreground">Fecha:</dt><dd className="font-medium">{datos.datosGenerales.fechaElaboracion}</dd></div>
+                    <div className="flex justify-between"><dt className="text-muted-foreground">Área:</dt><dd className="font-medium">{datos.datosGenerales.areaSolicitante}</dd></div>
+                    <div className="flex justify-between"><dt className="text-muted-foreground">Solicitante:</dt><dd className="font-medium">{datos.datosGenerales.solicitante}</dd></div>
                   </dl>
                 </div>
                 <div>
-                  <h4 className="font-semibold mb-2 text-foreground">Detalles de Contratación</h4>
+                  <h4 className="font-semibold mb-2 text-foreground">Contratación</h4>
                   <dl className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Tipo:</dt>
-                      <dd className="font-medium">{datos.datosGenerales.tipoContratacion || 'No especificado'}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Programa:</dt>
-                      <dd className="font-medium">{datos.datosGenerales.programaProyecto || 'No especificado'}</dd>
-                    </div>
+                    <div className="flex justify-between"><dt className="text-muted-foreground">Tipo:</dt><dd className="font-medium">{datos.datosGenerales.tipoContratacion || 'N/A'}</dd></div>
+                    <div className="flex justify-between"><dt className="text-muted-foreground">Programa:</dt><dd className="font-medium">{datos.datosGenerales.programaProyecto || 'N/A'}</dd></div>
                   </dl>
                 </div>
               </div>
+              
+              {/* TABLA DE PARTIDAS (VISUAL) */}
               <div>
                 <h4 className="font-semibold mb-3 text-foreground">Partidas Solicitadas</h4>
                 <div className="border rounded-md overflow-hidden">
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[80px]">Partida</TableHead>
                         <TableHead className="w-[100px]">CUCOP</TableHead>
                         <TableHead>Descripción</TableHead>
-                        <TableHead className="text-right w-[80px]">Cantidad</TableHead>
-                        <TableHead className="w-[100px]">Unidad</TableHead>
-                        <TableHead className="text-right w-[120px]">Precio Unit.</TableHead>
+                        <TableHead className="text-right w-[80px]">Cant.</TableHead>
+                        <TableHead className="w-[80px]">Unidad</TableHead>
+                        <TableHead className="text-right w-[120px]">Precio Est.</TableHead>
                         <TableHead className="text-right w-[120px]">Importe</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {datos.partidas.map((partida, idx) => (
                         <TableRow key={idx}>
+                          <TableCell className="font-bold text-xs">{partida.partida_especifica || '-'}</TableCell>
                           <TableCell className="font-mono text-xs">{partida.cucop}</TableCell>
-                          <TableCell className="text-sm">{partida.descripcion}</TableCell>
+                          <TableCell className="text-sm">{partida.descripcion.substring(0,60)}...</TableCell>
                           <TableCell className="text-right">{partida.cantidad}</TableCell>
                           <TableCell>{partida.unidad}</TableCell>
-                          <TableCell className="text-right">
-                            ${partida.precio_unitario.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell className="text-right font-medium">
-                            ${(partida.cantidad * partida.precio_unitario).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                          </TableCell>
+                          <TableCell className="text-right">${Number(partida.precio_estimado || partida.precio_unitario).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</TableCell>
+                          <TableCell className="text-right font-medium">${(partida.cantidad * Number(partida.precio_estimado || partida.precio_unitario)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -295,6 +428,7 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                 </div>
               </div>
               
+              {/* LUGARES DE ENTREGA */}
               {datos.datosGenerales.lugarEntrega && datos.datosGenerales.lugarEntrega.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-2 text-foreground">Lugar(es) de Entrega</h4>
@@ -303,14 +437,8 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                       <div key={dir.id} className="text-sm p-3 border rounded-md bg-muted/30">
                         <p className="font-medium">{idx + 1}. {dir.direccion}</p>
                         {dir.linkGoogleMaps && (
-                          <a 
-                            href={dir.linkGoogleMaps} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            Ver en Google Maps
+                          <a href={dir.linkGoogleMaps} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
+                            <ExternalLink className="h-3 w-3" /> Ver en Google Maps
                           </a>
                         )}
                       </div>
@@ -318,114 +446,39 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                   </div>
                 </div>
               )}
+
+              {/* INVESTIGACIÓN DE MERCADO */}
               {datos.proveedoresInvitados.length > 0 && (
                 <div>
                   <h4 className="font-semibold mb-3 text-foreground">Investigación de Mercado</h4>
-                  
-                  {/* Proveedor Adjudicado */}
-                  {datos.proveedorGanador && datos.razonSeleccion && (
+                  {datos.proveedorGanador && (
                     <div className="mb-4 p-4 bg-green-50 border-2 border-green-200 rounded-lg">
                       <h5 className="font-bold text-sm text-green-900 mb-1">PROVEEDOR ADJUDICADO</h5>
                       <p className="text-lg font-bold text-green-800 mb-2">{datos.proveedorGanador}</p>
-                      <h5 className="font-semibold text-xs text-green-700 mb-1">Justificación de Selección:</h5>
+                      <h5 className="font-semibold text-xs text-green-700 mb-1">Razón de Selección:</h5>
                       <p className="text-sm text-green-900 italic">"{datos.razonSeleccion}"</p>
                     </div>
                   )}
                   
-                  {/* Resumen de Fuentes Consultadas */}
-                  <div className="mb-4 p-3 bg-muted/30 rounded-md border">
-                    <h5 className="font-medium text-sm mb-2">Fuentes Consultadas</h5>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      {datos.fuentesCompranet.length > 0 && (
-                        <div>
-                          <span className="font-medium">Compranet:</span> {datos.fuentesCompranet.length} contrato(s)
-                        </div>
-                      )}
-                      {datos.fuentesArchivosInternos.length > 0 && (
-                        <div>
-                          <span className="font-medium">Archivos Internos:</span> {datos.fuentesArchivosInternos.length} registro(s)
-                        </div>
-                      )}
-                      {datos.fuentesCamaras.length > 0 && (
-                        <div>
-                          <span className="font-medium">Cámaras/Universidades:</span> {datos.fuentesCamaras.length} institución(es)
-                        </div>
-                      )}
-                      {datos.fuentesInternet.length > 0 && (
-                        <div>
-                          <span className="font-medium">Internet:</span> {datos.fuentesInternet.length} búsqueda(s)
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Tabla Detallada de Proveedores */}
+                  {/* TABLA DE PROVEEDORES */}
                   <div className="border rounded-md overflow-hidden">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Proveedor</TableHead>
                           <TableHead>Origen</TableHead>
-                          <TableHead>Contacto</TableHead>
                           <TableHead>Estatus</TableHead>
-                          <TableHead className="text-center">Propuesta</TableHead>
+                          <TableHead className="text-center">Evidencia</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {datos.proveedoresInvitados.filter(p => p.seleccionado).map((proveedor) => {
-                          const getEstatusInfo = () => {
-                            if (!proveedor.solicitud_enviada) {
-                              return { 
-                                label: 'Pendiente de invitar', 
-                                color: 'bg-muted text-muted-foreground',
-                                icon: null 
-                              };
-                            }
-                            if (proveedor.solicitud_enviada && !proveedor.respuesta_subida) {
-                              return { 
-                                label: 'Esperando respuesta', 
-                                color: 'bg-amber-100 text-amber-800',
-                                icon: null 
-                              };
-                            }
-                            return { 
-                              label: 'Cotización recibida', 
-                              color: 'bg-green-100 text-green-800',
-                              icon: <Check className="h-3 w-3 mr-1" /> 
-                            };
-                          };
-
-                          const getOrigenLabel = (origen: string) => {
-                            const labels = {
-                              'compranet': 'Compranet',
-                              'archivo_interno': 'Archivo Interno',
-                              'camara_universidad': 'Cámara/Universidad',
-                              'internet': 'Internet'
-                            };
-                            return labels[origen as keyof typeof labels] || origen;
-                          };
-
-                          const getOrigenColor = (origen: string) => {
-                            const colors = {
-                              'compranet': 'bg-blue-500',
-                              'archivo_interno': 'bg-green-500',
-                              'camara_universidad': 'bg-purple-500',
-                              'internet': 'bg-orange-500'
-                            };
-                            return colors[origen as keyof typeof colors] || 'bg-gray-500';
-                          };
-
-                          const estatus = getEstatusInfo();
-
+                          const estatus = getEstatusInfo(proveedor);
                           return (
                             <TableRow key={proveedor.id}>
                               <TableCell>
-                                <div>
-                                  <div className="font-medium">{proveedor.nombre}</div>
-                                  {proveedor.rfc && (
-                                    <div className="text-xs text-muted-foreground">RFC: {proveedor.rfc}</div>
-                                  )}
-                                </div>
+                                <div className="font-medium">{proveedor.nombre}</div>
+                                {proveedor.rfc && <div className="text-xs text-muted-foreground">RFC: {proveedor.rfc}</div>}
                               </TableCell>
                               <TableCell>
                                 <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium text-white ${getOrigenColor(proveedor.origen)}`}>
@@ -433,43 +486,12 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                                 </span>
                               </TableCell>
                               <TableCell>
-                                <div className="text-sm">
-                                  {proveedor.email && (
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-xs text-muted-foreground">📧</span>
-                                      <span className="truncate max-w-[150px]">{proveedor.email}</span>
-                                    </div>
-                                  )}
-                                  {proveedor.telefono && (
-                                    <div className="flex items-center gap-1 text-muted-foreground">
-                                      <span className="text-xs">📞</span>
-                                      <span>{proveedor.telefono}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
                                 <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${estatus.color}`}>
-                                  {estatus.icon}
-                                  {estatus.label}
+                                  {estatus.icon} {estatus.label}
                                 </span>
                               </TableCell>
                               <TableCell className="text-center">
-                                {proveedor.respuesta_subida && proveedor.archivo_propuesta ? (
-                                  <div className="flex flex-col items-center gap-1">
-                                    <Check className="h-5 w-5 text-green-600" />
-                                    <span className="text-xs font-medium text-green-700">
-                                      {proveedor.archivo_propuesta.name}
-                                    </span>
-                                    {proveedor.fecha_respuesta && (
-                                      <span className="text-xs text-muted-foreground">
-                                        {proveedor.fecha_respuesta}
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )}
+                                {proveedor.respuesta_subida ? <Check className="h-5 w-5 text-green-600 mx-auto" /> : <span className="text-xs text-muted-foreground">—</span>}
                               </TableCell>
                             </TableRow>
                           );
@@ -479,6 +501,8 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                   </div>
                 </div>
               )}
+
+              {/* JUSTIFICACIÓN */}
               {datos.justificacion && (
                 <div>
                   <h4 className="font-semibold mb-2 text-foreground">Justificación</h4>
@@ -487,50 +511,28 @@ const Paso6_VistaPrevia: React.FC<Paso6Props> = ({
                   </div>
                 </div>
               )}
+
+              {/* TOTALES */}
               <div className="border-t pt-4">
                 <div className="flex justify-end">
                   <div className="w-80 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Subtotal:</span>
-                      <span className="font-medium">${calcularSubtotal().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span>IVA (16%):</span>
-                      <span className="font-medium">${calcularIVA().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                    <div className="flex justify-between text-lg font-bold border-t pt-2">
-                      <span>Total:</span>
-                      <span className="text-primary">${calcularTotal().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-                    </div>
+                    <div className="flex justify-between text-sm"><span>Subtotal:</span><span className="font-medium">${calcularSubtotal().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span></div>
+                    <div className="flex justify-between text-sm"><span>IVA (16%):</span><span className="font-medium">${calcularIVA().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span></div>
+                    <div className="flex justify-between text-lg font-bold border-t pt-2"><span>Total:</span><span className="text-primary">${calcularTotal().toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span></div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-md">
-            <h4 className="font-semibold text-amber-900 mb-2">Importante antes de enviar</h4>
-            <ul className="text-sm text-amber-800 list-disc list-inside space-y-1">
-              <li>Una vez enviada, la requisición no podrá ser editada</li>
-              <li>Se notificará al flujo de autorización correspondiente</li>
-              <li>Podrás consultar el estatus en "Mis Requisiciones"</li>
-            </ul>
-          </div>
         </div>
+        
+        {/* BOTONES FINALES */}
         <div className="flex justify-between pt-6 border-t mt-6">
-          <Button variant="outline" onClick={() => setPaso(5)} disabled={isLoading}>
-            Regresar
-          </Button>
+          <Button variant="outline" onClick={() => setPaso(5)} disabled={isLoading}>Regresar</Button>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={guardarBorrador} disabled={isLoading}>
-              Guardar Borrador
-            </Button>
-            <Button 
-              onClick={handleEnviarAutorizacion} 
-              className="bg-primary text-primary-foreground"
-              disabled={isLoading}
-            >
-              <Check className="h-4 w-4 mr-2" />
-              {isLoading ? 'Enviando...' : 'Enviar a Autorización'}
+            <Button variant="outline" onClick={guardarBorrador} disabled={isLoading}>Guardar Borrador</Button>
+            <Button onClick={handleEnviarAutorizacion} className="bg-primary text-primary-foreground" disabled={isLoading}>
+              <Check className="h-4 w-4 mr-2" /> {isLoading ? 'Enviando...' : 'Enviar a Autorización'}
             </Button>
           </div>
         </div>

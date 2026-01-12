@@ -20,6 +20,7 @@ export interface Partida {
   precio_unitario: number;
   precio_estimado?: number; // Precio de referencia de la tabla CUCOP
   importe?: number;
+  partida_especifica?: string;
 }
 
 export interface DireccionEntrega {
